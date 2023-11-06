@@ -1,0 +1,83 @@
+diff --git a/bfd/elfxx-riscv.c b/bfd/elfxx-riscv.c
+index 19391d94e30..4d7ee63c32d 100644
+--- a/bfd/elfxx-riscv.c
++++ b/bfd/elfxx-riscv.c
+@@ -1255,6 +1255,7 @@ static struct riscv_supported_ext riscv_supported_vendor_x_ext[] =
+   {"xtheadmemidx",	ISA_SPEC_CLASS_DRAFT,	1, 0, 0 },
+   {"xtheadmempair",	ISA_SPEC_CLASS_DRAFT,	1, 0, 0 },
+   {"xtheadsync",	ISA_SPEC_CLASS_DRAFT,	1, 0, 0 },
++  {"xishadow",	ISA_SPEC_CLASS_DRAFT,	1, 0, 0},
+   {NULL, 0, 0, 0, 0}
+ };
+ 
+@@ -2383,6 +2384,8 @@ riscv_multi_subset_supports (riscv_parse_subset_t *rps,
+       return riscv_subset_supports (rps, "xtheadmempair");
+     case INSN_CLASS_XTHEADSYNC:
+       return riscv_subset_supports (rps, "xtheadsync");
++    case INSN_CLASS_XISHADOW:
++      return riscv_subset_supports (rps, "xishadow");
+     default:
+       rps->error_handler
+         (_("internal: unreachable INSN_CLASS_*"));
+@@ -2541,6 +2544,8 @@ riscv_multi_subset_supports_ext (riscv_parse_subset_t *rps,
+       return "xtheadmempair";
+     case INSN_CLASS_XTHEADSYNC:
+       return "xtheadsync";
++    case INSN_CLASS_XISHADOW:
++      return "xishadow";
+     default:
+       rps->error_handler
+         (_("internal: unreachable INSN_CLASS_*"));
+diff --git a/include/opcode/riscv-opc.h b/include/opcode/riscv-opc.h
+index 85d35c1efc9..5025ac2dd46 100644
+--- a/include/opcode/riscv-opc.h
++++ b/include/opcode/riscv-opc.h
+@@ -2342,6 +2342,11 @@
+ #define MASK_TH_SYNC_IS 0xffffffff
+ #define MATCH_TH_SYNC_S 0x0190000b
+ #define MASK_TH_SYNC_S 0xffffffff
++/* Shadow instructions.  */
++#define MATCH_DUSK 0xb
++#define MASK_DUSK 0xfff07fff
++#define MATCH_OBSCURE 0x100b
++#define MASK_OBSCURE 0xfff07fff
+ /* Unprivileged Counter/Timers CSR addresses.  */
+ #define CSR_CYCLE 0xc00
+ #define CSR_TIME 0xc01
+@@ -3236,6 +3241,9 @@ DECLARE_INSN(th_sync, MATCH_TH_SYNC, MASK_TH_SYNC)
+ DECLARE_INSN(th_sync_i, MATCH_TH_SYNC_I, MASK_TH_SYNC_I)
+ DECLARE_INSN(th_sync_is, MATCH_TH_SYNC_IS, MASK_TH_SYNC_IS)
+ DECLARE_INSN(th_sync_s, MATCH_TH_SYNC_S, MASK_TH_SYNC_S)
++/* Shadow instructions.  */
++DECLARE_INSN(dusk, MATCH_DUSK, MASK_DUSK)
++DECLARE_INSN(obscure, MATCH_OBSCURE, MASK_OBSCURE)
+ #endif /* DECLARE_INSN */
+ #ifdef DECLARE_CSR
+ /* Unprivileged Counter/Timers CSRs.  */
+diff --git a/include/opcode/riscv.h b/include/opcode/riscv.h
+index b4ae55249bb..0a8525fa79a 100644
+--- a/include/opcode/riscv.h
++++ b/include/opcode/riscv.h
+@@ -422,6 +422,7 @@ enum riscv_insn_class
+   INSN_CLASS_XTHEADMEMIDX,
+   INSN_CLASS_XTHEADMEMPAIR,
+   INSN_CLASS_XTHEADSYNC,
++  INSN_CLASS_XISHADOW,
+ };
+ 
+ /* This structure holds information for a particular instruction.  */
+diff --git a/opcodes/riscv-opc.c b/opcodes/riscv-opc.c
+index f67375f10a9..94d374f1d1a 100644
+--- a/opcodes/riscv-opc.c
++++ b/opcodes/riscv-opc.c
+@@ -2009,6 +2009,10 @@ const struct riscv_opcode riscv_opcodes[] =
+ {"th.sync.is",       0, INSN_CLASS_XTHEADSYNC,  "",   MATCH_TH_SYNC_IS,       MASK_TH_SYNC_IS,       match_opcode, 0},
+ {"th.sync.s",        0, INSN_CLASS_XTHEADSYNC,  "",   MATCH_TH_SYNC_S,        MASK_TH_SYNC_S,        match_opcode, 0},
+ 
++/* Shadow instructions.  */
++{"dusk",    0, INSN_CLASS_I, "s", MATCH_DUSK,    MASK_DUSK,    match_opcode, 0},
++{"obscure", 0, INSN_CLASS_I, "s", MATCH_OBSCURE, MASK_OBSCURE, match_opcode, 0},
++
+ /* Terminate the list.  */
+ {0, 0, INSN_CLASS_NONE, 0, 0, 0, 0, 0}
+ };

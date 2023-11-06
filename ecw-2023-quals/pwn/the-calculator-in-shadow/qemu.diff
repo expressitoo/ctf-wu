@@ -1,0 +1,297 @@
+diff --git a/linux-user/riscv/cpu_loop.c b/linux-user/riscv/cpu_loop.c
+index bffca7db12..85e9bfceb0 100644
+--- a/linux-user/riscv/cpu_loop.c
++++ b/linux-user/riscv/cpu_loop.c
+@@ -72,6 +72,17 @@ void cpu_loop(CPURISCVState *env)
+                 goto gdbstep;
+             }
+             break;
++        case RISCV_EXCP_SHADOW:
++            fprintf(stderr, "\n");
++            fprintf(stderr, "================================================\n");
++            fprintf(stderr, "Shadow exception triggered!\n");
++            fprintf(stderr, "(Conveniently handled as an illegal instruction)\n");
++            fprintf(stderr, "\n");
++            fprintf(stderr, "The current dark page is 0x" TARGET_FMT_lx "\n", env->dark_page);
++            fprintf(stderr, "The current dark offset is 0x%" PRIx8 "\n", env->dark_offset);
++            fprintf(stderr, "================================================\n");
++            fprintf(stderr, "\n");
++            __attribute__ ((fallthrough));
+         case RISCV_EXCP_ILLEGAL_INST:
+             force_sig_fault(TARGET_SIGILL, TARGET_ILL_ILLOPC, env->pc);
+             break;
+diff --git a/target/riscv/cpu.c b/target/riscv/cpu.c
+index 1e97473af2..fef657cc88 100644
+--- a/target/riscv/cpu.c
++++ b/target/riscv/cpu.c
+@@ -131,6 +131,7 @@ static const struct isa_ext_data isa_edata_arr[] = {
+     ISA_EXT_DATA_ENTRY(xtheadmempair, true, PRIV_VERSION_1_11_0, ext_xtheadmempair),
+     ISA_EXT_DATA_ENTRY(xtheadsync, true, PRIV_VERSION_1_11_0, ext_xtheadsync),
+     ISA_EXT_DATA_ENTRY(xventanacondops, true, PRIV_VERSION_1_12_0, ext_XVentanaCondOps),
++    ISA_EXT_DATA_ENTRY(xishadow, true, PRIV_VERSION_1_12_0, ext_xishadow),
+ };
+ 
+ static bool isa_ext_is_enabled(RISCVCPU *cpu,
+@@ -1528,6 +1529,9 @@ static Property riscv_cpu_properties[] = {
+      * it with -x and default to 'false'.
+      */
+     DEFINE_PROP_BOOL("x-misa-w", RISCVCPU, cfg.misa_w, false),
++
++    DEFINE_PROP_BOOL("xishadow", RISCVCPU, cfg.ext_xishadow, true),
++
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
+diff --git a/target/riscv/cpu.h b/target/riscv/cpu.h
+index 638e47c75a..cbdba0bc64 100644
+--- a/target/riscv/cpu.h
++++ b/target/riscv/cpu.h
+@@ -383,6 +383,9 @@ struct CPUArchState {
+     uint64_t kvm_timer_compare;
+     uint64_t kvm_timer_state;
+     uint64_t kvm_timer_frequency;
++
++    target_ulong dark_page;
++    uint16_t dark_offset;
+ };
+ 
+ OBJECT_DECLARE_CPU_TYPE(RISCVCPU, RISCVCPUClass, RISCV_CPU)
+@@ -497,6 +500,9 @@ struct RISCVCPUConfig {
+     bool ext_xtheadsync;
+     bool ext_XVentanaCondOps;
+ 
++    /* Shadow extension */
++    bool ext_xishadow;
++
+     uint8_t pmu_num;
+     char *priv_spec;
+     char *user_spec;
+diff --git a/target/riscv/cpu_bits.h b/target/riscv/cpu_bits.h
+index fca7ef0cef..f930db99e4 100644
+--- a/target/riscv/cpu_bits.h
++++ b/target/riscv/cpu_bits.h
+@@ -523,6 +523,10 @@
+ /* Crypto Extension */
+ #define CSR_SEED            0x015
+ 
++/* Shadow Extension */
++#define CSR_DARKPAGE        0x01a
++#define CSR_DARKOFF         0x01b
++
+ /* mstatus CSR bits */
+ #define MSTATUS_UIE         0x00000001
+ #define MSTATUS_SIE         0x00000002
+@@ -677,6 +681,7 @@ typedef enum RISCVException {
+     RISCV_EXCP_LOAD_GUEST_ACCESS_FAULT = 0x15,
+     RISCV_EXCP_VIRT_INSTRUCTION_FAULT = 0x16,
+     RISCV_EXCP_STORE_GUEST_AMO_ACCESS_FAULT = 0x17,
++    RISCV_EXCP_SHADOW = 0x18,
+ } RISCVException;
+ 
+ #define RISCV_EXCP_INT_FLAG                0x80000000
+diff --git a/target/riscv/cpu_helper.c b/target/riscv/cpu_helper.c
+index f88c503cf4..43b60b2061 100644
+--- a/target/riscv/cpu_helper.c
++++ b/target/riscv/cpu_helper.c
+@@ -1647,6 +1647,7 @@ void riscv_cpu_do_interrupt(CPUState *cs)
+                 tinst = (riscv_cpu_xlen(env) == 32) ? 0x00002000 : 0x00003000;
+             }
+             break;
++        case RISCV_EXCP_SHADOW:
+         case RISCV_EXCP_ILLEGAL_INST:
+         case RISCV_EXCP_VIRT_INSTRUCTION_FAULT:
+             tval = env->bins;
+diff --git a/target/riscv/csr.c b/target/riscv/csr.c
+index 736ab64275..b81420f0e3 100644
+--- a/target/riscv/csr.c
++++ b/target/riscv/csr.c
+@@ -550,6 +550,14 @@ static RISCVException seed(CPURISCVState *env, int csrno)
+ #endif
+ }
+ 
++static RISCVException shadow(CPURISCVState *env, int csrno)
++{
++    if (!riscv_cpu_cfg(env)->ext_xishadow) {
++        return RISCV_EXCP_ILLEGAL_INST;
++    }
++    return RISCV_EXCP_NONE;
++}
++
+ /* User Floating-Point CSRs */
+ static RISCVException read_fflags(CPURISCVState *env, int csrno,
+                                   target_ulong *val)
+@@ -3995,6 +4003,36 @@ RISCVException riscv_csrrw_debug(CPURISCVState *env, int csrno,
+     return ret;
+ }
+ 
++/* Shadow */
++
++static RISCVException read_dark_page(CPURISCVState *env, int csrno,
++                                     target_ulong *val)
++{
++    *val = env->dark_page;
++    return RISCV_EXCP_NONE;
++}
++
++static RISCVException write_dark_page(CPURISCVState *env, int csrno,
++                                      target_ulong val)
++{
++    env->dark_page = val;
++    return RISCV_EXCP_NONE;
++}
++
++static RISCVException read_dark_offset(CPURISCVState *env, int csrno,
++                                       target_ulong *val)
++{
++    *val = (target_ulong) env->dark_offset;
++    return RISCV_EXCP_NONE;
++}
++
++static RISCVException write_dark_offset(CPURISCVState *env, int csrno,
++                                        target_ulong val)
++{
++    env->dark_offset = (uint16_t)(val & 0xFFFF);
++    return RISCV_EXCP_NONE;
++}
++
+ /*
+  * Control and Status Register function table
+  * riscv_csr_operations::predicate() must be provided for an implemented CSR
+@@ -4028,6 +4066,10 @@ riscv_csr_operations csr_ops[CSR_TABLE_SIZE] = {
+     /* Crypto Extension */
+     [CSR_SEED] = { "seed", seed, NULL, NULL, rmw_seed },
+ 
++    /* Shadow Extension */
++    [CSR_DARKPAGE] = {"vdarkpage", shadow, read_dark_page, write_dark_page},
++    [CSR_DARKOFF]  = {"vdarkoff", shadow, read_dark_offset, write_dark_offset},
++
+ #if !defined(CONFIG_USER_ONLY)
+     /* Machine Timers and Counters */
+     [CSR_MCYCLE]    = { "mcycle",    any,   read_hpmcounter,
+diff --git a/target/riscv/insn32.decode b/target/riscv/insn32.decode
+index 73d5d1b045..1a6c9d881e 100644
+--- a/target/riscv/insn32.decode
++++ b/target/riscv/insn32.decode
+@@ -908,3 +908,8 @@ sm4ks       .. 11010 ..... ..... 000 ..... 0110011 @k_aes
+ # *** RV32 Zicond Standard Extension ***
+ czero_eqz   0000111  ..... ..... 101 ..... 0110011 @r
+ czero_nez   0000111  ..... ..... 111 ..... 0110011 @r
++
++# *** Shadow Extension ***
++@shadow     .......  ..... ..... ... ..... ....... %rs1
++dusk        0000000  00000 ..... 000 00000 0001011 @shadow
++obscure     0000000  00000 ..... 001 00000 0001011 @shadow
+diff --git a/target/riscv/insn_trans/trans_rvi.c.inc b/target/riscv/insn_trans/trans_rvi.c.inc
+index 4ad54e8a49..31062b27c3 100644
+--- a/target/riscv/insn_trans/trans_rvi.c.inc
++++ b/target/riscv/insn_trans/trans_rvi.c.inc
+@@ -65,6 +65,30 @@ static bool trans_jalr(DisasContext *ctx, arg_jalr *a)
+     }
+ 
+     gen_set_gpri(ctx, a->rd, ctx->pc_succ_insn);
++
++    if (a->rd == 0 && a->rs1 == xRA && a->imm == 0) {
++        TCGLabel *shadow_pact_end = gen_new_label();
++
++        TCGv dark_offset = tcg_temp_new();
++        TCGv_i32 csr_darkoff = tcg_constant_i32(CSR_DARKOFF);
++        gen_helper_csrr(dark_offset, cpu_env, csr_darkoff);
++        tcg_gen_brcondi_tl(TCG_COND_EQ, dark_offset, 0, shadow_pact_end);
++
++        tcg_gen_addi_tl(dark_offset, dark_offset, -1 * get_xlen_bytes(ctx));
++        gen_helper_csrw(cpu_env, csr_darkoff, dark_offset);
++        TCGv darkest_address = get_darkest_address(ctx, dark_offset);
++
++        TCGv dark_pc = tcg_temp_new();
++        tcg_gen_qemu_ld_tl(dark_pc, darkest_address, ctx->mem_idx,
++                           MO_ALIGN | MO_TE | size_memop(get_xlen_bytes(ctx)));
++        tcg_gen_brcond_tl(TCG_COND_EQ, cpu_pc, dark_pc, shadow_pact_end);
++
++        tcg_gen_st_tl(cpu_pc, cpu_env, offsetof(CPURISCVState, badaddr));
++        generate_exception(ctx, RISCV_EXCP_SHADOW);
++
++        gen_set_label(shadow_pact_end);
++    }
++
+     lookup_and_goto_ptr(ctx);
+ 
+     if (misaligned) {
+diff --git a/target/riscv/insn_trans/trans_shadow.c.inc b/target/riscv/insn_trans/trans_shadow.c.inc
+new file mode 100644
+index 0000000000..8d98f413bb
+--- /dev/null
++++ b/target/riscv/insn_trans/trans_shadow.c.inc
+@@ -0,0 +1,27 @@
++static bool trans_dusk(DisasContext *ctx, arg_dusk *a)
++{
++    TCGv_i32 csr_darkpage = tcg_constant_i32(CSR_DARKPAGE);
++    gen_helper_csrw(cpu_env, csr_darkpage, get_gpr(ctx, a->rs1, EXT_NONE));
++
++    TCGv_i32 csr_darkoff = tcg_constant_i32(CSR_DARKOFF);
++    TCGv zero = tcg_constant_tl(0);
++    gen_helper_csrw(cpu_env, csr_darkoff, zero);
++
++    return true;
++}
++
++static bool trans_obscure(DisasContext *ctx, arg_obscure *a)
++{
++    TCGv dark_offset = tcg_temp_new();
++    TCGv_i32 csr_darkoff = tcg_constant_i32(CSR_DARKOFF);
++    gen_helper_csrr(dark_offset, cpu_env, csr_darkoff);
++    TCGv darkest_address = get_darkest_address(ctx, dark_offset);
++
++    TCGv saved_data = get_gpr(ctx, a->rs1, EXT_NONE);
++    tcg_gen_qemu_st_tl(saved_data, darkest_address, ctx->mem_idx,
++                       MO_ALIGN | MO_TE | size_memop(get_xlen_bytes(ctx)));
++
++    tcg_gen_addi_tl(dark_offset, dark_offset, get_xlen_bytes(ctx));
++    gen_helper_csrw(cpu_env, csr_darkoff, dark_offset);
++    return true;
++}
+diff --git a/target/riscv/translate.c b/target/riscv/translate.c
+index 0ee8ee147d..26db5b6f1a 100644
+--- a/target/riscv/translate.c
++++ b/target/riscv/translate.c
+@@ -156,6 +156,12 @@ static inline int __attribute__((unused)) get_xlen(DisasContext *ctx)
+     return 16 << get_xl(ctx);
+ }
+ 
++/* The word size for this machine mode, in bytes. */
++static inline int __attribute__((unused)) get_xlen_bytes(DisasContext *ctx)
++{
++    return get_xlen(ctx) >> 3;
++}
++
+ /* The operation length, as opposed to the xlen. */
+ #ifdef TARGET_RISCV32
+ #define get_ol(ctx)    MXL_RV32
+@@ -1069,6 +1075,18 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
+     return cpu_ldl_code(env, pc);
+ }
+ 
++static TCGv get_darkest_address(DisasContext *ctx, TCGv dark_offset)
++{
++    TCGv dark_page = tcg_temp_new();
++    TCGv_i32 csr_darkpage = tcg_constant_i32(CSR_DARKPAGE);
++    gen_helper_csrr(dark_page, cpu_env, csr_darkpage);
++
++    TCGv darkest_address = tcg_temp_new();
++    tcg_gen_add_tl(darkest_address, dark_page, dark_offset);
++
++    return darkest_address;
++}
++
+ /* Include insn module translation function */
+ #include "insn_trans/trans_rvi.c.inc"
+ #include "insn_trans/trans_rvm.c.inc"
+@@ -1094,6 +1112,9 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
+ /* Include decoders for factored-out extensions */
+ #include "decode-XVentanaCondOps.c.inc"
+ 
++/* Include Shadow extension */
++#include "insn_trans/trans_shadow.c.inc"
++
+ /* The specification allows for longer insns, but not supported by qemu. */
+ #define MAX_INSN_LEN  4
+ 
