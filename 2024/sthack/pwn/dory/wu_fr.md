@@ -5,7 +5,7 @@ Catégorie : `pwn`
 
 Difficulté : `hard`
 
-Nombre de résolutions : 1
+Nombre de résolutions : `1`
 
 > Dory voyage parmi les étoiles de mer, tout ce dont elle se rappelle, son nom... Aidez là à retrouver sa coquille...<br>
 > `nc seastars.boisson.homeip.net 40011`.
@@ -55,7 +55,7 @@ Le bug est bien évidemment une simple format string, mais pas vraiment si simpl
 
 Vous l'avez remarquer, l'appel à la fonction `printf` affiche le contenu de `argv[0]`. Cela fait de cet appel une bonne cible pour avoir une primitive de lecture, en modifiant la valeur de `argv[0]` on peut lire où l'on souhaite.
 
-Sachant que l'on n'a pas de leak de la stack, cela signifie que nous devrons nous localiser sur la stack, et c'est probablement la partie la plus dûre du challenge. Pour cela deux solutions s'offre à nous.
+Sachant que l'on n'a pas de leak de la stack, cela signifie que nous devrons nous localiser sur la stack, et c'est probablement la partie la plus dure du challenge. Pour cela deux solutions s'offre à nous.
 
 ### Réécriture du LSB de l'argv
 
@@ -71,9 +71,9 @@ Heureusement pour nous, `argv` est situé plus loin sur la stack ce qui fait que
 
 [![argv_index.png](./assets/argv_index.png)](./assets/argv_index.png)
 
-Pourquoi l'index 5 ? Parce que la fonction `fprintf` utilise déjà deux arguments (**RDI**: stream, **RSI**: format), donc les arguments qui suivent seront dans **RDX**, **RCX**, **R8**, **R9** puis sur la stack. Et comme on peut le constater sur l'image au-dessus, `argv` est référence sur le haut de la stack au premier index.
+Pourquoi l'index 5 ? Parce que la fonction `fprintf` utilise déjà deux arguments (**RDI**: stream, **RSI**: format), donc les arguments qui suivent seront dans **RDX**, **RCX**, **R8**, **R9** puis sur la stack. Et comme on peut le constater sur l'image au-dessus, `argv` est référencé sur le haut de la stack au premier index.
 
-Maintenant il faut que l'on puisse réécire avec certitude la valeur de `argv[0]` avec une adresse fixe. Pour cela nous allons utilisé une fonctionnalité de la famille de `printf`, l'indicateur de largeur de champs ou *width* en anglais.
+Maintenant il faut que l'on puisse réécrire avec certitude la valeur de `argv[0]` avec une adresse fixe. Pour cela nous allons utiliser une fonctionnalité de la famille de `printf`, l'indicateur de largeur de champs `*` ou *width* en anglais.
 
 Passons à l'exploitation, cette simple charge utile `%*5$c%5$hn` a pour objectif de récupérer la valeur à l'index 5, ici `argv`, puis d'écrire autant d'espaces pour ensuite réécrire les deux octets de poids faible de `argv[0]`. Cela nous permet de leak l'adresse de `argv` à coup sûr à chaque fois.
 
@@ -81,7 +81,7 @@ Prenons un exemple pour mieux visualiser ce qui se trame derrière ce trick. Voi
 
 [![argv_overwrite_example_before.png](./assets/argv_overwrite_example_before.png)](./assets/argv_overwrite_example_before.png)
 
-A l'index 5 on a l'`argv` comme avant, et à l'index 11 la valeur `0x1337` qui dans notre cas réél serait l'adresse de `argv`. Il va donc d'abord y avoir 0x1337 espaces d'écrit avant que `%5$hn` écrive à l'index 5 (`argv`) ce nombre :
+A l'index 5 on a l'`argv` comme avant, et à l'index 11 la valeur `0x1337` qui dans notre cas réel serait l'adresse de `argv`. Il va donc d'abord y avoir 0x1337 espaces d'écrits avant que `%5$hn` écrive à l'index 5 (`argv`) ce nombre :
 
 [![argv_overwrite_example_after.png](./assets/argv_overwrite_example_after.png)](./assets/argv_overwrite_example_after.png)
 
@@ -140,7 +140,7 @@ LABEL (width_asterics):
 
 Avant de pouvoir lire à une adresse arbitraire, il nous faut d'abord construire notre primitive d'écriture pour forger un faux `argv` sur la stack. Etant donné que l'on est limité en taille, pour écrire des adresses hors stack il nous faudra plusieurs écritures (on peut passer encore par le trick avec l'`*` mais ce n'est pas primordial).
 
-Notre objectif sera de modifié les deux octets de poids faible de `argv` pour pointer vers l'adresse de notre pointeur sur la stack, ensuite on pourra restaurer `argv` à l'état initial.
+Notre objectif sera de modifier les deux octets de poids faible de `argv` pour pointer vers l'adresse de notre pointeur sur la stack, ensuite on pourra restaurer `argv` à l'état initial.
 
 Pour ce faire, cette fonction dans l'exploit nous permet d'écriture 2 octets par 2 octets un entier 64-bits à une adresse arbitraire :
 
@@ -157,7 +157,7 @@ def write(self, addr: int, value: int):
     self.io.clean()
 ```
 
-Une autre fonction utile pour écrire des valeurs qui ne rentre pas à cause de la limite de l'entrée, et qui utilise le trick avec l'`*`. La valeur est stocké à une adresse (ici l'adresse qu'on pourra accèder à l'index 21), puis écrite à une adresse arbitraire :
+Une autre fonction utile pour écrire des valeurs qui ne rentre pas à cause de la limite de l'entrée, et qui utilise le trick avec l'`*`. La valeur est stockée à une adresse (ici l'adresse qu'on pourra accéder à l'index 21), puis écrite à une adresse arbitraire :
 
 ```py
 def write_one(self, addr: int, value: int):
@@ -197,7 +197,7 @@ Afin d'obtenir un shell nous avons plusieurs choix, on peut passer par un one ga
 
 ### one_gadget
 
-Avec l'outil [`one_gadget`](https://github.com/david942j/one_gadget) on peut récupèrer la liste des candidats pour un one gadget :
+Avec l'outil [`one_gadget`](https://github.com/david942j/one_gadget) on peut récupérer la liste des candidats pour un one gadget :
 
 ```c
 0x4d8cc posix_spawn(rsp+0xc, "/bin/sh", 0, rbx, rsp+0x50, environ)
@@ -259,10 +259,10 @@ io.send(f"%5$lln".encode())
 io.io.sendline(b"%*15$c%13$n%*16$c%14$hn")
 ```
 
-Vous pouvez retrouver les exploits complets [ici](https://github.com/expressitoo/ctf-wu/blob/main/2024/sthack/pwn/dory/), le premier nécessite deux bruteforces de 4-bits (un succès de 1/10 pendant les tests), dans le cadre du CTF le plus rapide ne veut pas dire le plus stable. Tandis que le deuxième nécessite seulement un bruteforce de 4-bits pour les 32-bits de l'argv qui doivent être inférieur à un `INT_MAX` (un succès de 1/3 pendant les tests).
+Vous pouvez retrouver les exploits complets [ici](https://github.com/expressitoo/ctf-wu/blob/main/2024/sthack/pwn/dory/), le premier nécessite de bruteforcer 4 bits à deux reprises (un succès de 1/10 pendant les tests), dans le cadre du CTF le plus rapide ne veut pas dire le plus stable. Tandis que le deuxième nécessite seulement de bruteforcer 4-bits pour les 32-bits de l'argv qui doivent être inférieur à un `INT_MAX` (un succès de 1/3 pendant les tests).
 
 Enfin voici le résultat après exécution du script :
 
 [![flag.png](./assets/flag.png)](./assets/flag.png)
 
-Flag : `STHACK{n0t_5o-8lind!!}`
+Flag : `STHACK{I_R3m3m8er!!}`
