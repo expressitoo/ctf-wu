@@ -1,8 +1,10 @@
 # dory
 ## Description
 
-Catégorie: `pwn`
+Catégorie : `pwn`
+
 Difficulté : `hard`
+
 Nombre de résolutions : 1
 
 > Dory voyage parmi les étoiles de mer, tout ce dont elle se rappelle, son nom... Aidez là à retrouver sa coquille...<br>
